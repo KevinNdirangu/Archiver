@@ -57,11 +57,11 @@ console.log("\n🎉 Success! config.json generated.");
 console.log("\n⚙️ Registering Task Scheduler to run at Logon...");
 try {
     const scriptPath = path.join(__dirname, 'run-silent.vbs');
-    const psTaskCmd = `Register-ScheduledTask -TaskName "UniversalAutoArchiver" -Trigger (New-ScheduledTaskTrigger -AtLogOn) -Action (New-ScheduledTaskAction -Execute "wscript.exe" -Argument '""${scriptPath}""') -Description "Runs Archiver in background" -Force`;
+    const psTaskCmd = `Register-ScheduledTask -TaskName 'UniversalAutoArchiver' -Trigger (New-ScheduledTaskTrigger -AtLogOn) -Action (New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '""${scriptPath}""') -Description 'Runs Archiver in background' -Force`;
     execSync(`powershell -NoProfile -Command "${psTaskCmd}"`, { stdio: 'inherit' });
     console.log("✅ Task Scheduled successfully! It will start automatically when you log on.");
 } catch (err) {
-    console.error("\n⚠️ Failed to register Scheduled Task automatically.");
-    console.error("Please run the following PowerShell command as Administrator to register it:");
-    console.error(`Register-ScheduledTask -TaskName "UniversalAutoArchiver" -Trigger (New-ScheduledTaskTrigger -AtLogOn) -Action (New-ScheduledTaskAction -Execute "wscript.exe" -Argument '""${path.join(__dirname, 'run-silent.vbs')}""') -Force`);
+    console.error("\n⚠️ Failed to register Scheduled Task automatically. This usually requires Administrator privileges.");
+    console.error("Please open PowerShell as Administrator and run the following command:");
+    console.error(`Register-ScheduledTask -TaskName 'UniversalAutoArchiver' -Trigger (New-ScheduledTaskTrigger -AtLogOn) -Action (New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '""${path.join(__dirname, 'run-silent.vbs')}""') -Description 'Runs Archiver in background' -Force`);
 }
