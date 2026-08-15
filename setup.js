@@ -111,14 +111,21 @@ while (true) {
     }
 }
 
+let defaultExtensions = [
+    ".xlsx", ".docx", ".pdf", ".txt", ".csv", ".pptx", ".js", ".json",
+    ".rtf", ".md", ".doc", ".xls", ".ppt", ".png", ".jpg", ".jpeg", ".html", ".css",
+    ".epub", ".mobi", ".azw3"
+];
+
+let watchExtensions = existingConfig.watch_extensions 
+    ? [...new Set([...existingConfig.watch_extensions, ...defaultExtensions])] 
+    : defaultExtensions;
+
 const configData = {
     enabled: true,
     source_folders: sourceFolders,
     archive_folders: archiveFolders,
-    watch_extensions: existingConfig.watch_extensions || [
-        ".xlsx", ".docx", ".pdf", ".txt", ".csv", ".pptx", ".js", ".json",
-        ".rtf", ".md", ".doc", ".xls", ".ppt", ".png", ".jpg", ".jpeg", ".html", ".css"
-    ],
+    watch_extensions: watchExtensions,
     retry_attempts: existingConfig.retry_attempts || 3,
     retry_delay_ms: existingConfig.retry_delay_ms || 3000
 };
