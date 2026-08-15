@@ -9,9 +9,11 @@ if (!fs.existsSync(configPath)) {
 }
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-// Migration support from old config format
 if (config.source_folder && !config.source_folders) {
     config.source_folders = [config.source_folder];
+}
+if (config.archive_folder && !config.archive_folders) {
+    config.archive_folders = [config.archive_folder];
 }
 
 function getTimestamp() {
@@ -32,7 +34,7 @@ function getTimestamp() {
 async function copyWithRetry(src, dest, attemptsLeft) {
     try {
         fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
-        console.log(`✅ SUCCESS: Archived -> ${path.basename(dest)}`);
+        console.log(`✅ SUCCESS: Archived -> ${path.basename(dest)} to ${path.dirname(dest)}`);
     } catch (err) {
         if (err.code === 'EEXIST') return;
         if (attemptsLeft > 0 && (err.code === 'EBUSY' || err.code === 'EPERM')) {
@@ -49,9 +51,7 @@ function archiveFile(filePath) {
     if (!config.watch_extensions.includes(ext)) return;
 
     const absoluteFilePath = path.resolve(filePath).replace(/\\/g, '/');
-    const absoluteArchiveFolder = path.resolve(config.archive_folder);
 
-    // Find which source folder this file belongs to
     let matchingSourceFolder = null;
     for (let sf of config.source_folders) {
         const absSF = path.resolve(sf).replace(/\\/g, '/');
@@ -67,23 +67,26 @@ function archiveFile(filePath) {
 
     const fileName = path.basename(absoluteFilePath, ext);
     const { dateDir, timeString } = getTimestamp();
-    
     const relativeDir = path.relative(matchingSourceFolder, path.dirname(absoluteFilePath));
-    const dailyArchiveDir = path.join(absoluteArchiveFolder, dateDir, relativeDir);
+    const newFileName = `${fileName}_${timeString}${ext}`;
 
-    try {
-        if (!fs.existsSync(dailyArchiveDir)) {
-            fs.mkdirSync(dailyArchiveDir, { recursive: true });
+    for (let targetFolder of config.archive_folders) {
+        const absoluteArchiveFolder = path.resolve(targetFolder);
+        const dailyArchiveDir = path.join(absoluteArchiveFolder, dateDir, relativeDir);
+
+        try {
+            if (!fs.existsSync(dailyArchiveDir)) {
+                fs.mkdirSync(dailyArchiveDir, { recursive: true });
+            }
+
+            const destinationPath = path.join(dailyArchiveDir, newFileName);
+
+            if (fs.existsSync(absoluteFilePath)) {
+                copyWithRetry(absoluteFilePath, destinationPath, config.retry_attempts);
+            }
+        } catch (dirErr) {
+            console.error(`❌ Directory creation error in ${targetFolder}:`, dirErr.message);
         }
-
-        const newFileName = `${fileName}_${timeString}${ext}`;
-        const destinationPath = path.join(dailyArchiveDir, newFileName);
-
-        if (fs.existsSync(absoluteFilePath)) {
-            copyWithRetry(absoluteFilePath, destinationPath, config.retry_attempts);
-        }
-    } catch (dirErr) {
-        console.error(`❌ Directory creation error:`, dirErr.message);
     }
 }
 
@@ -98,3 +101,4 @@ const watcher = chokidar.watch(config.source_folders, {
 
 watcher.on('add', archiveFile).on('change', archiveFile);
 console.log(`🚀 Engine running! Watching:\n - ${config.source_folders.join('\n - ')}`);
+console.log(`📂 Outputting to:\n - ${config.archive_folders.join('\n - ')}`);

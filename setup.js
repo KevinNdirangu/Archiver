@@ -24,9 +24,35 @@ try {
     console.error("⚠️ Failed to run npm install automatically. You might need to run it manually.");
 }
 
-const sourceFolders = [];
+const configPath = path.join(__dirname, 'config.json');
+let existingConfig = {};
+if (fs.existsSync(configPath)) {
+    try {
+        existingConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        console.log("ℹ️ Found existing configuration. Your previous folders will be kept.");
+    } catch (e) {
+        console.error("⚠️ Failed to read existing config.json. Starting fresh.");
+    }
+}
+
+let sourceFolders = existingConfig.source_folders || [];
+if (existingConfig.source_folder && !sourceFolders.includes(existingConfig.source_folder)) {
+    sourceFolders.push(existingConfig.source_folder);
+}
+
+let archiveFolders = existingConfig.archive_folders || [];
+if (existingConfig.archive_folder && !archiveFolders.includes(existingConfig.archive_folder)) {
+    archiveFolders.push(existingConfig.archive_folder);
+}
+
+sourceFolders = [...new Set(sourceFolders)];
+archiveFolders = [...new Set(archiveFolders)];
+
+if (sourceFolders.length > 0) {
+    console.log(`\nCurrent Source Folders: \n - ${sourceFolders.join('\n - ')}`);
+}
 while (true) {
-    const title = sourceFolders.length === 0 ? "Select a SOURCE folder to watch" : "Select ANOTHER SOURCE folder (or click Cancel to finish)";
+    const title = sourceFolders.length === 0 ? "Select a SOURCE folder to watch" : "Select ANOTHER SOURCE folder (or click Cancel to skip/finish)";
     const folder = pickFolder(title);
     if (!folder) {
         if (sourceFolders.length === 0) {
@@ -35,27 +61,51 @@ while (true) {
         }
         break;
     }
-    sourceFolders.push(folder.replace(/\\/g, '/'));
-    console.log(`✔️ Added: ${folder}`);
+    const normalized = folder.replace(/\\/g, '/');
+    if (!sourceFolders.includes(normalized)) {
+        sourceFolders.push(normalized);
+        console.log(`✔️ Added Source: ${folder}`);
+    } else {
+        console.log(`ℹ️ Already watching: ${folder}`);
+    }
 }
 
-const archiveFolder = pickFolder("Select the TARGET folder for backups");
-if (!archiveFolder) { console.log("❌ Cancelled."); process.exit(1); }
+if (archiveFolders.length > 0) {
+    console.log(`\nCurrent Target (Archive) Folders: \n - ${archiveFolders.join('\n - ')}`);
+}
+while (true) {
+    const title = archiveFolders.length === 0 ? "Select a TARGET folder for backups" : "Select ANOTHER TARGET folder (or click Cancel to skip/finish)";
+    const folder = pickFolder(title);
+    if (!folder) {
+        if (archiveFolders.length === 0) {
+            console.log("❌ Cancelled setup. No target folder selected.");
+            process.exit(1);
+        }
+        break;
+    }
+    const normalized = folder.replace(/\\/g, '/');
+    if (!archiveFolders.includes(normalized)) {
+        archiveFolders.push(normalized);
+        console.log(`✔️ Added Target: ${folder}`);
+    } else {
+        console.log(`ℹ️ Already targeting: ${folder}`);
+    }
+}
 
 const configData = {
     enabled: true,
     source_folders: sourceFolders,
-    archive_folder: archiveFolder.replace(/\\/g, '/'),
-    watch_extensions: [
+    archive_folders: archiveFolders,
+    watch_extensions: existingConfig.watch_extensions || [
         ".xlsx", ".docx", ".pdf", ".txt", ".csv", ".pptx", ".js", ".json",
         ".rtf", ".md", ".doc", ".xls", ".ppt", ".png", ".jpg", ".jpeg", ".html", ".css"
     ],
-    retry_attempts: 3,
-    retry_delay_ms: 3000
+    retry_attempts: existingConfig.retry_attempts || 3,
+    retry_delay_ms: existingConfig.retry_delay_ms || 3000
 };
 
-fs.writeFileSync(path.join(__dirname, 'config.json'), JSON.stringify(configData, null, 4));
-console.log("\n🎉 Success! config.json generated.");
+fs.writeFileSync(configPath, JSON.stringify(configData, null, 4));
+console.log("\n🎉 Success! config.json updated.");
 
 console.log("\n⚙️ Registering Task Scheduler to run at Logon...");
 try {
@@ -67,4 +117,12 @@ try {
     console.error("\n⚠️ Failed to register Scheduled Task automatically. This usually requires Administrator privileges.");
     console.error("Please open PowerShell as Administrator and run the following command:");
     console.error(`Register-ScheduledTask -TaskName 'UniversalAutoArchiver' -Trigger (New-ScheduledTaskTrigger -AtLogOn) -Action (New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '""${path.join(__dirname, 'run-silent.vbs')}""') -Description 'Runs Archiver in background' -Force`);
+}
+
+try {
+    execSync(`powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name = 'node.exe'\\" | Where-Object {$_.CommandLine -like '*index.js*'} | Invoke-CimMethod -MethodName Terminate"`, { stdio: 'ignore' });
+    console.log("\n🔄 Automatically restarted the background Archiver to apply new folders!");
+    execSync(`wscript.exe "${path.join(__dirname, 'run-silent.vbs')}"`);
+} catch (err) {
+    // If it fails to restart, it's fine
 }
