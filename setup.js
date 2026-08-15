@@ -34,6 +34,19 @@ function askYesNo(dialogTitle, promptText) {
     }
 }
 
+// Returns true if `candidate` overlaps with any folder in `otherFolders`
+// (exact match, candidate is inside other, or other is inside candidate)
+function conflictsWithFolders(candidate, otherFolders) {
+    const norm = path.resolve(candidate).replace(/\\/g, '/');
+    for (const f of otherFolders) {
+        const other = path.resolve(f).replace(/\\/g, '/');
+        if (norm === other || norm.startsWith(other + '/') || other.startsWith(norm + '/')) {
+            return other;
+        }
+    }
+    return null;
+}
+
 const configPath = path.join(__dirname, 'config.json');
 let existingConfig = {};
 let keepExisting = false;
@@ -81,6 +94,12 @@ while (true) {
         break;
     }
     const normalized = folder.replace(/\\/g, '/');
+    const conflict = conflictsWithFolders(normalized, archiveFolders);
+    if (conflict) {
+        console.log(`❌ Conflict! "${folder}" overlaps with an existing target folder ("${conflict}").`);
+        console.log(`   This would cause an echo loop. Please pick a different folder.`);
+        continue;
+    }
     if (!sourceFolders.includes(normalized)) {
         sourceFolders.push(normalized);
         console.log(`✔️ Added Source: ${folder}`);
@@ -103,6 +122,12 @@ while (true) {
         break;
     }
     const normalized = folder.replace(/\\/g, '/');
+    const conflict = conflictsWithFolders(normalized, sourceFolders);
+    if (conflict) {
+        console.log(`❌ Conflict! "${folder}" overlaps with a watched source folder ("${conflict}").`);
+        console.log(`   This would cause an echo loop. Please pick a different folder.`);
+        continue;
+    }
     if (!archiveFolders.includes(normalized)) {
         archiveFolders.push(normalized);
         console.log(`✔️ Added Target: ${folder}`);
