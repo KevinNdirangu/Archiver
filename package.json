@@ -1,0 +1,15 @@
+{
+  "name": "universal-auto-archiver",
+  "version": "1.0.0",
+  "description": "Automatically archives and versions files when changed.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "setup": "node setup.js"
+  },
+  "author": "Kevin Ndirangu",
+  "license": "ISC",
+  "dependencies": {
+    "chokidar": "^3.5.3"
+  }
+}
