@@ -24,25 +24,44 @@ try {
     console.error("⚠️ Failed to run npm install automatically. You might need to run it manually.");
 }
 
+function askYesNo(dialogTitle, promptText) {
+    const psCommand = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('${promptText}', '${dialogTitle}', 'YesNo', 'Question')`;
+    try {
+        const result = execSync(`powershell -STA -NoProfile -Command "${psCommand}"`, { encoding: 'utf8' }).trim();
+        return result === 'Yes';
+    } catch (err) {
+        return true;
+    }
+}
+
 const configPath = path.join(__dirname, 'config.json');
 let existingConfig = {};
+let keepExisting = false;
+
 if (fs.existsSync(configPath)) {
     try {
         existingConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        console.log("ℹ️ Found existing configuration. Your previous folders will be kept.");
+        console.log("ℹ️ Found existing configuration.");
+        keepExisting = askYesNo("Existing Configuration", "An existing configuration was found.\n\nDo you want to KEEP your currently watched folders and add to them?\n\n(Click 'No' to clear them and start fresh.)");
+        if (!keepExisting) console.log("🗑️ Starting fresh! Old folders cleared.");
     } catch (e) {
         console.error("⚠️ Failed to read existing config.json. Starting fresh.");
     }
 }
 
-let sourceFolders = existingConfig.source_folders || [];
-if (existingConfig.source_folder && !sourceFolders.includes(existingConfig.source_folder)) {
-    sourceFolders.push(existingConfig.source_folder);
-}
+let sourceFolders = [];
+let archiveFolders = [];
 
-let archiveFolders = existingConfig.archive_folders || [];
-if (existingConfig.archive_folder && !archiveFolders.includes(existingConfig.archive_folder)) {
-    archiveFolders.push(existingConfig.archive_folder);
+if (keepExisting) {
+    sourceFolders = existingConfig.source_folders || [];
+    if (existingConfig.source_folder && !sourceFolders.includes(existingConfig.source_folder)) {
+        sourceFolders.push(existingConfig.source_folder);
+    }
+
+    archiveFolders = existingConfig.archive_folders || [];
+    if (existingConfig.archive_folder && !archiveFolders.includes(existingConfig.archive_folder)) {
+        archiveFolders.push(existingConfig.archive_folder);
+    }
 }
 
 sourceFolders = [...new Set(sourceFolders)];
