@@ -10,18 +10,9 @@ function pickFolder(dialogTitle) {
         const result = execSync(`powershell -STA -NoProfile -Command "${psCommand}"`, { encoding: 'utf8' }).trim();
         return result || null;
     } catch (err) {
-        console.error(`\n⚠️ PowerShell error: ${err.message}`);
+        console.error(`\n[WARN] PowerShell folder picker error: ${err.message}`);
         return null;
     }
-}
-
-console.log("🛠️ Universal Auto-Archiver Setup\n");
-
-console.log("📦 Checking and installing dependencies...");
-try {
-    execSync('npm install', { stdio: 'inherit', cwd: __dirname });
-} catch (err) {
-    console.error("⚠️ Failed to run npm install automatically. You might need to run it manually.");
 }
 
 function askYesNo(dialogTitle, promptText) {
@@ -34,8 +25,6 @@ function askYesNo(dialogTitle, promptText) {
     }
 }
 
-// Returns true if `candidate` overlaps with any folder in `otherFolders`
-// (exact match, candidate is inside other, or other is inside candidate)
 function conflictsWithFolders(candidate, otherFolders) {
     const norm = path.resolve(candidate).replace(/\\/g, '/');
     for (const f of otherFolders) {
@@ -47,6 +36,17 @@ function conflictsWithFolders(candidate, otherFolders) {
     return null;
 }
 
+console.log("\n==========================================");
+console.log(" Universal Auto-Archiver Setup");
+console.log("==========================================\n");
+
+console.log("[SETUP] Checking and installing dependencies...");
+try {
+    execSync('npm install', { stdio: 'inherit', cwd: __dirname });
+} catch (err) {
+    console.error("[WARN] Failed to run npm install automatically.");
+}
+
 const configPath = path.join(__dirname, 'config.json');
 let existingConfig = {};
 let keepExisting = false;
@@ -54,11 +54,11 @@ let keepExisting = false;
 if (fs.existsSync(configPath)) {
     try {
         existingConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        console.log("ℹ️ Found existing configuration.");
+        console.log("[INFO] Found existing configuration.");
         keepExisting = askYesNo("Existing Configuration", "An existing configuration was found.\n\nDo you want to KEEP your currently watched folders and add to them?\n\n(Click 'No' to clear them and start fresh.)");
-        if (!keepExisting) console.log("🗑️ Starting fresh! Old folders cleared.");
+        if (!keepExisting) console.log("[INFO] Starting fresh! Old folders cleared.");
     } catch (e) {
-        console.error("⚠️ Failed to read existing config.json. Starting fresh.");
+        console.error("[WARN] Failed to read existing config.json. Starting fresh.");
     }
 }
 
@@ -66,20 +66,14 @@ let sourceFolders = [];
 let archiveFolders = [];
 
 if (keepExisting) {
-    sourceFolders = existingConfig.source_folders || [];
-    if (existingConfig.source_folder && !sourceFolders.includes(existingConfig.source_folder)) {
-        sourceFolders.push(existingConfig.source_folder);
-    }
-
-    archiveFolders = existingConfig.archive_folders || [];
-    if (existingConfig.archive_folder && !archiveFolders.includes(existingConfig.archive_folder)) {
-        archiveFolders.push(existingConfig.archive_folder);
-    }
+    sourceFolders = existingConfig.source_folders || existingConfig.sourceFolders || [];
+    archiveFolders = existingConfig.archive_folders || existingConfig.targetFolders || [];
 }
 
 sourceFolders = [...new Set(sourceFolders)];
 archiveFolders = [...new Set(archiveFolders)];
 
+// Select SOURCE Folders
 if (sourceFolders.length > 0) {
     console.log(`\nCurrent Source Folders: \n - ${sourceFolders.join('\n - ')}`);
 }
@@ -88,7 +82,7 @@ while (true) {
     const folder = pickFolder(title);
     if (!folder) {
         if (sourceFolders.length === 0) {
-            console.log("❌ Cancelled setup. No source folder selected.");
+            console.log("[ERROR] Cancelled setup. No source folder selected.");
             process.exit(1);
         }
         break;
@@ -96,18 +90,18 @@ while (true) {
     const normalized = folder.replace(/\\/g, '/');
     const conflict = conflictsWithFolders(normalized, archiveFolders);
     if (conflict) {
-        console.log(`❌ Conflict! "${folder}" overlaps with an existing target folder ("${conflict}").`);
-        console.log(`   This would cause an echo loop. Please pick a different folder.`);
+        console.log(`[ERROR] Conflict! "${folder}" overlaps with target folder ("${conflict}"). Pick a different folder.`);
         continue;
     }
     if (!sourceFolders.includes(normalized)) {
         sourceFolders.push(normalized);
-        console.log(`✔️ Added Source: ${folder}`);
+        console.log(`[ADDED] Source: ${folder}`);
     } else {
-        console.log(`ℹ️ Already watching: ${folder}`);
+        console.log(`[INFO] Already watching: ${folder}`);
     }
 }
 
+// Select TARGET Folders
 if (archiveFolders.length > 0) {
     console.log(`\nCurrent Target (Archive) Folders: \n - ${archiveFolders.join('\n - ')}`);
 }
@@ -116,7 +110,7 @@ while (true) {
     const folder = pickFolder(title);
     if (!folder) {
         if (archiveFolders.length === 0) {
-            console.log("❌ Cancelled setup. No target folder selected.");
+            console.log("[ERROR] Cancelled setup. No target folder selected.");
             process.exit(1);
         }
         break;
@@ -124,15 +118,14 @@ while (true) {
     const normalized = folder.replace(/\\/g, '/');
     const conflict = conflictsWithFolders(normalized, sourceFolders);
     if (conflict) {
-        console.log(`❌ Conflict! "${folder}" overlaps with a watched source folder ("${conflict}").`);
-        console.log(`   This would cause an echo loop. Please pick a different folder.`);
+        console.log(`[ERROR] Conflict! "${folder}" overlaps with source folder ("${conflict}"). Pick a different folder.`);
         continue;
     }
     if (!archiveFolders.includes(normalized)) {
         archiveFolders.push(normalized);
-        console.log(`✔️ Added Target: ${folder}`);
+        console.log(`[ADDED] Target: ${folder}`);
     } else {
-        console.log(`ℹ️ Already targeting: ${folder}`);
+        console.log(`[INFO] Already targeting: ${folder}`);
     }
 }
 
@@ -155,25 +148,17 @@ const configData = {
     retry_delay_ms: existingConfig.retry_delay_ms || 3000
 };
 
+// Write config.json
 fs.writeFileSync(configPath, JSON.stringify(configData, null, 4));
-console.log("\n🎉 Success! config.json updated.");
+console.log("\n[SUCCESS] config.json created and updated successfully.");
 
-console.log("\n⚙️ Registering Task Scheduler to run at Logon...");
+// Handover to register-task.ps1
+console.log("\n[SETUP] Handing over to register-task.ps1 to configure the background service...");
 try {
-    const scriptPath = path.join(__dirname, 'run-silent.vbs');
-    const psTaskCmd = `Register-ScheduledTask -TaskName 'UniversalAutoArchiver' -Trigger (New-ScheduledTaskTrigger -AtLogOn) -Action (New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '""${scriptPath}""') -Description 'Runs Archiver in background' -Force`;
-    execSync(`powershell -NoProfile -Command "${psTaskCmd}"`, { stdio: 'inherit' });
-    console.log("✅ Task Scheduled successfully! It will start automatically when you log on.");
+    const psScriptPath = path.join(__dirname, 'register-task.ps1');
+    execSync(`powershell -ExecutionPolicy Bypass -File "${psScriptPath}"`, { stdio: 'inherit' });
 } catch (err) {
-    console.error("\n⚠️ Failed to register Scheduled Task automatically. This usually requires Administrator privileges.");
-    console.error("Please open PowerShell as Administrator and run the following command:");
-    console.error(`Register-ScheduledTask -TaskName 'UniversalAutoArchiver' -Trigger (New-ScheduledTaskTrigger -AtLogOn) -Action (New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '""${path.join(__dirname, 'run-silent.vbs')}""') -Description 'Runs Archiver in background' -Force`);
-}
-
-try {
-    execSync(`powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name = 'node.exe'\\" | Where-Object {$_.CommandLine -like '*index.js*'} | Invoke-CimMethod -MethodName Terminate"`, { stdio: 'ignore' });
-    console.log("\n🔄 Automatically restarted the background Archiver to apply new folders!");
-    execSync(`wscript.exe "${path.join(__dirname, 'run-silent.vbs')}"`);
-} catch (err) {
-    // If it fails to restart, it's fine
+    console.error("\n[ERROR] Failed to register task automatically.");
+    console.error("Please open PowerShell as Administrator and run manually:");
+    console.error(`powershell -ExecutionPolicy Bypass -File "${path.join(__dirname, 'register-task.ps1')}"`);
 }

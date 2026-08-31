@@ -1,104 +1,196 @@
 const fs = require('fs');
 const path = require('path');
-const chokidar = require('chokidar');
 
+// 1. Load Configuration
 const configPath = path.join(__dirname, 'config.json');
+
 if (!fs.existsSync(configPath)) {
-    console.error("❌ config.json missing. Run 'node setup.js' first.");
+    console.error("[ERROR] config.json not found. Please run 'npm run setup' first.");
     process.exit(1);
 }
-const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-if (config.source_folder && !config.source_folders) {
-    config.source_folders = [config.source_folder];
-}
-if (config.archive_folder && !config.archive_folders) {
-    config.archive_folders = [config.archive_folder];
+let config;
+try {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+} catch (err) {
+    console.error("[ERROR] Failed to parse config.json:", err.message);
+    process.exit(1);
 }
 
-function getTimestamp() {
+const sourceFolders = config.source_folders || config.sourceFolders || [];
+const archiveFolders = config.archive_folders || config.targetFolders || [];
+const watchExtensions = config.watch_extensions || [
+    ".xlsx", ".docx", ".pdf", ".txt", ".csv", ".pptx", ".js", ".json",
+    ".rtf", ".md", ".doc", ".xls", ".ppt", ".png", ".jpg", ".jpeg"
+];
+
+if (sourceFolders.length === 0 || archiveFolders.length === 0) {
+    console.error("[ERROR] Source or Target folders are missing in config.json.");
+    process.exit(1);
+}
+
+// Month names helper for clean folder naming
+const MONTH_NAMES = [
+    "01_January", "02_February", "03_March", "04_April",
+    "05_May", "06_June", "07_July", "08_August",
+    "09_September", "10_October", "11_November", "12_December"
+];
+
+// 2. Helper: Get Current Year, Named Month, and DD-MM-YYYY Day
+function CalendarStructure() {
     const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    const hh = String(now.getHours()).padStart(2, '0');
-    const min = String(now.getMinutes()).padStart(2, '0');
-    const ss = String(now.getSeconds()).padStart(2, '0');
+    const year = now.getFullYear().toString();
+    const monthNumber = String(now.getMonth() + 1).padStart(2, '0');
+    const dayNumber = String(now.getDate()).padStart(2, '0');
+
+    const monthFolder = MONTH_NAMES[now.getMonth()];
+    // Builds DD-MM-YYYY -> e.g. "31-08-2026"
+    const dayFolder = `${dayNumber}-${monthNumber}-${year}`; 
     
-    return {
-        dateDir: `${yyyy}-${mm}-${dd}`,
-        timeString: `${yyyy}-${mm}-${dd}_${hh}${min}${ss}`
-    };
+    return { year, monthFolder, dayFolder };
 }
 
-async function copyWithRetry(src, dest, attemptsLeft) {
-    try {
-        fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
-        console.log(`✅ SUCCESS: Archived -> ${path.basename(dest)} to ${path.dirname(dest)}`);
-    } catch (err) {
-        if (err.code === 'EEXIST') return;
-        if (attemptsLeft > 0 && (err.code === 'EBUSY' || err.code === 'EPERM')) {
-            setTimeout(() => copyWithRetry(src, dest, attemptsLeft - 1), config.retry_delay_ms);
+// 3. Helper: Copy Files Recursively
+function copyFolderRecursive(source, target) {
+    if (!fs.existsSync(target)) {
+        fs.mkdirSync(target, { recursive: true });
+    }
+
+    const files = fs.readdirSync(source);
+
+    files.forEach((file) => {
+        const curSource = path.join(source, file);
+        const curTarget = path.join(target, file);
+
+        if (fs.lstatSync(curSource).isDirectory()) {
+            copyFolderRecursive(curSource, curTarget);
         } else {
-            console.error(`⚠️ Copy failed for ${path.basename(src)}:`, err.message);
+            const ext = path.extname(file).toLowerCase();
+            if (watchExtensions.includes(ext) || watchExtensions.length === 0) {
+                try {
+                    fs.copyFileSync(curSource, curTarget);
+                } catch (err) {
+                    console.error(`[WARN] Could not copy file ${file}:`, err.message);
+                }
+            }
         }
-    }
+    });
 }
 
-function archiveFile(filePath) {
-    if (!config.enabled) return;
-    const ext = path.extname(filePath).toLowerCase();
-    if (!config.watch_extensions.includes(ext)) return;
+// 4. Trigger Archival Snapshot into Year / Month / DD-MM-YYYY structure
+function triggerSnapshot() {
+    const { year, monthFolder, dayFolder } = CalendarStructure();
+    console.log(`\n[ARCHIVE] Starting snapshot run: ${year} -> ${monthFolder} -> ${dayFolder}...`);
 
-    const absoluteFilePath = path.resolve(filePath).replace(/\\/g, '/');
-
-    let matchingSourceFolder = null;
-    for (let sf of config.source_folders) {
-        const absSF = path.resolve(sf).replace(/\\/g, '/');
-        if (absoluteFilePath.startsWith(absSF)) {
-            matchingSourceFolder = absSF;
-            break;
-        }
-    }
-
-    if (!matchingSourceFolder) {
-        matchingSourceFolder = path.dirname(absoluteFilePath);
-    }
-
-    const fileName = path.basename(absoluteFilePath, ext);
-    const { dateDir, timeString } = getTimestamp();
-    const relativeDir = path.relative(matchingSourceFolder, path.dirname(absoluteFilePath));
-    const newFileName = `${fileName}_${timeString}${ext}`;
-
-    for (let targetFolder of config.archive_folders) {
-        const absoluteArchiveFolder = path.resolve(targetFolder);
-        const dailyArchiveDir = path.join(absoluteArchiveFolder, dateDir, relativeDir);
-
-        try {
-            if (!fs.existsSync(dailyArchiveDir)) {
-                fs.mkdirSync(dailyArchiveDir, { recursive: true });
+    archiveFolders.forEach((vaultDir) => {
+        sourceFolders.forEach((sourceDir) => {
+            if (!fs.existsSync(sourceDir)) {
+                console.log(`[WARN] Source folder does not exist: ${sourceDir}`);
+                return;
             }
 
-            const destinationPath = path.join(dailyArchiveDir, newFileName);
+            const sourceFolderName = path.basename(sourceDir);
+            
+            // Builds target path as: TargetVault / 2026 / 08_August / 31-08-2026 / SourceFolderName
+            const destinationPath = path.join(vaultDir, year, monthFolder, dayFolder, sourceFolderName);
 
-            if (fs.existsSync(absoluteFilePath)) {
-                copyWithRetry(absoluteFilePath, destinationPath, config.retry_attempts);
+            try {
+                copyFolderRecursive(sourceDir, destinationPath);
+                console.log(`[SUCCESS] Backed up: ${sourceFolderName} -> ${destinationPath}`);
+            } catch (err) {
+                console.error(`[ERROR] Failed backing up ${sourceFolderName}:`, err.message);
             }
-        } catch (dirErr) {
-            console.error(`❌ Directory creation error in ${targetFolder}:`, dirErr.message);
-        }
-    }
+        });
+    });
 }
 
-const watcher = chokidar.watch(config.source_folders, {
-    ignored: /(^|[\/\\])\..|~\$/, 
-    persistent: true,
-    awaitWriteFinish: { stabilityThreshold: 4000, pollInterval: 1000 },
-    ignoreInitial: true,
-    ignorePermissionErrors: true,
-    depth: 99
-});
+// 5. Purge Old Snapshots (Older than 30 Days)
+function purgeOldSnapshots(retentionDays = 30) {
+    const now = Date.now();
+    const maxAgeMs = retentionDays * 24 * 60 * 60 * 1000;
 
-watcher.on('add', archiveFile).on('change', archiveFile);
-console.log(`🚀 Engine running! Watching:\n - ${config.source_folders.join('\n - ')}`);
-console.log(`📂 Outputting to:\n - ${config.archive_folders.join('\n - ')}`);
+    archiveFolders.forEach((vaultDir) => {
+        if (!fs.existsSync(vaultDir)) return;
+
+        const years = fs.readdirSync(vaultDir);
+        years.forEach((year) => {
+            const yearPath = path.join(vaultDir, year);
+            if (fs.lstatSync(yearPath).isDirectory() && /^\d{4}$/.test(year)) {
+                
+                const months = fs.readdirSync(yearPath);
+                months.forEach((month) => {
+                    const monthPath = path.join(yearPath, month);
+                    if (fs.lstatSync(monthPath).isDirectory()) {
+                        
+                        const days = fs.readdirSync(monthPath);
+                        days.forEach((day) => {
+                            const dayPath = path.join(monthPath, day);
+                            // Matches DD-MM-YYYY pattern like 31-08-2026
+                            if (fs.lstatSync(dayPath).isDirectory() && /^\d{2}-\d{2}-\d{4}$/.test(day)) {
+                                const stats = fs.statSync(dayPath);
+                                if (now - stats.mtimeMs > maxAgeMs) {
+                                    try {
+                                        fs.rmSync(dayPath, { recursive: true, force: true });
+                                        console.log(`[CLEANUP] Purged old snapshot: ${year}/${month}/${day}`);
+                                    } catch (err) {
+                                        console.error(`[WARN] Failed to purge ${dayPath}:`, err.message);
+                                    }
+                                }
+                            }
+                        });
+
+                        // Clean up empty month folders if all days were purged
+                        if (fs.readdirSync(monthPath).length === 0) {
+                            fs.rmdirSync(monthPath);
+                        }
+                    }
+                });
+
+                // Clean up empty year folders if all months were purged
+                if (fs.readdirSync(yearPath).length === 0) {
+                    fs.rmdirSync(yearPath);
+                }
+            }
+        });
+    });
+}
+
+// 6. Execution Modes (Command-line flag vs Watcher Daemon)
+const args = process.argv.slice(2);
+
+if (args.includes('--snapshot')) {
+    triggerSnapshot();
+    purgeOldSnapshots();
+    console.log("[DONE] Snapshot complete.");
+    process.exit(0);
+} else {
+    console.log("==========================================");
+    console.log(" Universal Auto-Archiver Daemon Active");
+    console.log(` Watching ${sourceFolders.length} source folder(s)...`);
+    console.log("==========================================");
+
+    triggerSnapshot();
+    purgeOldSnapshots();
+
+    sourceFolders.forEach((folder) => {
+        if (fs.existsSync(folder)) {
+            let debounceTimer;
+            fs.watch(folder, { recursive: true }, (eventType, filename) => {
+                if (filename) {
+                    const ext = path.extname(filename).toLowerCase();
+                    if (watchExtensions.includes(ext)) {
+                        clearTimeout(debounceTimer);
+                        debounceTimer = setTimeout(() => {
+                            console.log(`[CHANGE DETECTED] ${filename} altered in ${folder}`);
+                            triggerSnapshot();
+                        }, 5000);
+                    }
+                }
+            });
+        }
+    });
+
+    setInterval(() => {
+        purgeOldSnapshots();
+    }, 24 * 60 * 60 * 1000);
+}
